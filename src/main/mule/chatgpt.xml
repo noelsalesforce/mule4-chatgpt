@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:chatgpt="http://www.mulesoft.org/schema/mule/chatgpt"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/chatgpt http://www.mulesoft.org/schema/mule/chatgpt/current/mule-chatgpt.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="e2c92a68-e95c-4a96-9377-09817d81268c" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<chatgpt:config name="ChatGPT_Config" doc:name="ChatGPT Config" doc:id="b1716e7f-54ae-43de-9c4c-2a54ac5a3c61" >
+		<chatgpt:connection apiKey="${chatgpt.apikey}" />
+	</chatgpt:config>
+	<configuration-properties doc:name="Configuration properties" doc:id="e8254d29-25c5-450e-9373-6bd12e9fa5a2" file="credentials.properties" />
+	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config" doc:id="652116b8-32ea-4942-b003-954dad21e061" >
+		<salesforce:basic-connection username="${sfdc.usernameManufacturing}" password="${sfdc.passwordManufacturing}" />
+	</salesforce:sfdc-config>
+	<flow name="Flow" doc:id="91bbc0de-8693-4289-bb5e-989c3e4bdd93" >
+		<http:listener doc:name="Pass two versions of information" doc:id="564a2da6-774e-4a28-be64-2e3673be04ab" config-ref="HTTP_Listener_config" path="/askAI" />
+		<chatgpt:chat doc:name="Ask for Deviations" doc:id="75e17fce-bbd0-4547-a2cc-c709f64a9c04" config-ref="ChatGPT_Config" chatGptVersion="chatgpt-4o-latest" >
+			<chatgpt:current-message ><![CDATA[#[%dw 2.0
+output application/json
+---
+{
+	content: "Here's information about legal description of property for an agreement. Version1 is from the initial agreement. Version2 is now newer information. List all the deviations from both versions. If there are no deviations, do not return any values. Please respond with natural language with details. Payload data: " ++ write(payload, "application/json")
+}]]]></chatgpt:current-message>
+		</chatgpt:chat>
+		<set-variable value="#[payload.choices[0].message.content]" doc:name="AI Response" doc:id="81e37c5e-c91a-45f5-83bc-675d2319b030" variableName="ai_response" />
+		<salesforce:query doc:id="2fa1b2d4-1738-4189-a4f7-dea34a93dcc1" config-ref="Salesforce_Config" doc:name="Query" >
+			<salesforce:salesforce-query ><![CDATA[SELECT Id
+FROM SBQQ__QuoteTerm__c
+WHERE Version__c = '3'
+]]></salesforce:salesforce-query>
+		</salesforce:query>
+		<ee:transform doc:name="Transform Message" doc:id="7cef9992-e1b3-481b-84a8-4a3ab8b9c7ec" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+[
+	{
+		Id: payload[0].Id,
+		AI_Summary__c: vars.ai_response
+	}
+]
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<salesforce:upsert objectType="SBQQ__QuoteTerm__c" externalIdFieldName="Id" doc:id="040dfc23-fe05-4cd1-9fe6-dea404917ac1" config-ref="Salesforce_Config" doc:name="Upsert" />
+		<ee:transform doc:name="Transform Message" doc:id="0f4c9e6c-db91-4c80-b928-3766da9ccc61" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+</mule>
